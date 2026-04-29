@@ -33,18 +33,27 @@ from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
 from google.cloud import bigquery
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config — env vars override config.ini (Cloud Run uses env vars) ───────────
 config = configparser.ConfigParser()
 config.read(os.path.join(os.path.dirname(__file__), "config.ini"))
 
-ga = config["google_ads"]
-DEVELOPER_TOKEN = ga["developer_token"]
-CLIENT_ID       = ga["client_id"]
-CLIENT_SECRET   = ga["client_secret"]
-REFRESH_TOKEN   = ga["refresh_token"]
-CUSTOMER_ID     = ga["customer_id"].replace("-", "")
+def _cfg(env_key, ini_section, ini_key):
+    val = os.environ.get(env_key)
+    if not val:
+        try: val = config[ini_section][ini_key]
+        except KeyError: pass
+    if not val:
+        print(f"❌ Missing config: {env_key} / [{ini_section}] {ini_key}")
+        sys.exit(1)
+    return val
 
-BQ_PROJECT = "terra-analytics-prod"
+DEVELOPER_TOKEN = _cfg("GOOGLE_ADS_DEVELOPER_TOKEN", "google_ads", "developer_token")
+CLIENT_ID       = _cfg("GOOGLE_ADS_CLIENT_ID",       "google_ads", "client_id")
+CLIENT_SECRET   = _cfg("GOOGLE_ADS_CLIENT_SECRET",   "google_ads", "client_secret")
+REFRESH_TOKEN   = _cfg("GOOGLE_ADS_REFRESH_TOKEN",   "google_ads", "refresh_token")
+CUSTOMER_ID     = _cfg("GOOGLE_ADS_CUSTOMER_ID",     "google_ads", "customer_id").replace("-", "")
+
+BQ_PROJECT = os.environ.get("BQ_PROJECT", "terra-analytics-prod")
 BQ_DATASET = "sources"
 
 # ── Clients ───────────────────────────────────────────────────────────────────
@@ -267,6 +276,17 @@ def load_to_bq(table, rows, schema, mode):
     print(f"  ✅ {table_id} — {bq.get_table(table_id).num_rows:,} rows")
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
+def get_max_date(table):
+    """Return MAX(date) from a BQ table as a string, or None if table is empty."""
+    try:
+        result = list(bq.query(f"SELECT CAST(MAX(date) AS STRING) AS max_date FROM `{BQ_PROJECT}.{BQ_DATASET}.{table}`").result())
+        val = result[0].max_date if result else None
+        if val:
+            print(f"  Resuming from last date in {table}: {val}")
+        return val
+    except Exception:
+        return None
+
 def date_chunks(start_str, end_str, chunk_days=90):
     start = datetime.strptime(start_str, "%Y-%m-%d").date()
     end   = datetime.strptime(end_str,   "%Y-%m-%d").date()
@@ -285,7 +305,12 @@ def main():
     end_date = str(date.today() - timedelta(days=1))
 
     if args.mode == "incremental":
-        start_date = str(date.today() - timedelta(days=7))
+        # Resume from MAX(date) in BQ, with 2-day overlap for late-arriving conversion data
+        max_date = get_max_date("google_ads_campaigns_daily")
+        if max_date:
+            start_date = str((datetime.strptime(max_date, "%Y-%m-%d").date() - timedelta(days=2)))
+        else:
+            start_date = str(date.today() - timedelta(days=7))
         bq_mode = bigquery.WriteDisposition.WRITE_APPEND
         print(f"🚀 Google Ads incremental: {start_date} → {end_date}")
     else:
