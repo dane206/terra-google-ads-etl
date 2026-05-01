@@ -1,27 +1,38 @@
 #!/usr/bin/env bash
-# Terra Google Ads ETL
-# Usage: ./deploy.sh dev | ./deploy.sh prod
+# Terra Google Ads ETL — Deploy to dev or prod
+# Usage: ./deploy.sh dev
+#        ./deploy.sh prod
 
 set -euo pipefail
 
-ENV="${1:-}"
+ENV=${1:-}
 if [[ "$ENV" != "dev" && "$ENV" != "prod" ]]; then
-  echo "Usage: ./deploy.sh dev | ./deploy.sh prod"
+  echo "❌ Usage: ./deploy.sh dev|prod"
   exit 1
 fi
 
-PROJECT="terra-analytics-${ENV}"
+if [[ "$ENV" == "prod" ]]; then
+  PROJECT="terra-analytics-prod"
+  JOB="terra-google-ads-etl"
+  SCHEDULE="0 8 * * *"
+else
+  PROJECT="terra-analytics-dev"
+  JOB="terra-google-ads-etl-dev"
+  SCHEDULE="0 8 * * *"
+fi
+
 REGION="us-central1"
-JOB="terra-google-ads-etl-${ENV}"
 IMAGE="gcr.io/${PROJECT}/${JOB}:latest"
 SA="terra-etl-runner@${PROJECT}.iam.gserviceaccount.com"
 
-echo "🔨 Building and pushing image → ${PROJECT}..."
+echo "🚀 Deploying terra-google-ads-etl → ${PROJECT} [${ENV}]"
+
+echo "🔨 Building and pushing image..."
 gcloud builds submit . \
   --tag="${IMAGE}" \
   --project="${PROJECT}"
 
-echo "🚀 Creating/updating Cloud Run Job..."
+echo "📦 Creating/updating Cloud Run Job..."
 gcloud run jobs update "${JOB}" \
   --image="${IMAGE}" \
   --region="${REGION}" \
@@ -50,7 +61,7 @@ echo "⏰ Creating/updating Cloud Scheduler..."
 gcloud scheduler jobs update http "schedule-${JOB}" \
   --location="${REGION}" \
   --project="${PROJECT}" \
-  --schedule="0 8 * * *" \
+  --schedule="${SCHEDULE}" \
   --time-zone="America/Los_Angeles" \
   --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${JOB}:run" \
   --message-body="{}" \
@@ -59,7 +70,7 @@ gcloud scheduler jobs update http "schedule-${JOB}" \
 gcloud scheduler jobs create http "schedule-${JOB}" \
   --location="${REGION}" \
   --project="${PROJECT}" \
-  --schedule="0 8 * * *" \
+  --schedule="${SCHEDULE}" \
   --time-zone="America/Los_Angeles" \
   --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${JOB}:run" \
   --message-body="{}" \
