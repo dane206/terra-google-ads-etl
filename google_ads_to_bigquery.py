@@ -53,8 +53,8 @@ CLIENT_SECRET   = _cfg("GOOGLE_ADS_CLIENT_SECRET",   "google_ads", "client_secre
 REFRESH_TOKEN   = _cfg("GOOGLE_ADS_REFRESH_TOKEN",   "google_ads", "refresh_token")
 CUSTOMER_ID     = _cfg("GOOGLE_ADS_CUSTOMER_ID",     "google_ads", "customer_id").replace("-", "")
 
-BQ_PROJECT = config["bigquery"]["project"]
-BQ_DATASET = config["bigquery"]["dataset"]
+BQ_PROJECT = os.environ.get("BQ_PROJECT") or config.get("bigquery", "project", fallback="terra-analytics-dev")
+BQ_DATASET = config.get("bigquery", "dataset", fallback="sources")
 
 # ── Clients ───────────────────────────────────────────────────────────────────
 google_ads_client = GoogleAdsClient.load_from_dict({
